@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sheets Pro 💕</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#ff8fb1">
+<link rel="apple-touch-icon" href="icon-192.png">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+:root{
+  --primary:#ff8fb1;
+  --danger:#ff6b6b;
+  --bg:#fdf6f9;
+  --card:#ffffff;
+  --grid:#d0d0d0;
+  --grid-soft:#e0e0e0;
+  --row-alt:#fafafa;
+  --active:#ff5fa8;
+  --duplicate:#fff0c2;
+}
+body{
+  margin:0;
+  background:var(--bg);
+  font-family:"Kanit",sans-serif;
+}
+.container{
+  max-width:1200px;
+  margin:16px auto;
+  background:var(--card);
+  padding:16px;
+  border-radius:16px;
+  box-shadow:0 10px 30px rgba(255,143,177,.25);
+}
+
+/* ===== HEADER ===== */
+.header{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:12px;
+}
+.header-top{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  align-items:center;
+}
+.header-bottom{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  background:#fff0f6;
+  padding:8px 12px;
+  border-radius:12px;
+  border:1px solid var(--active);
+}
+button{
+  border:0;
+  padding:8px 14px;
+  border-radius:10px;
+  cursor:pointer;
+  color:#fff;
+}
+.btn-primary{background:var(--primary)}
+.btn-danger{background:var(--danger)}
+.btn-round{
+  width:40px;height:40px;
+  border-radius:50%;
+  font-size:1.1rem;
+  padding:0;
+}
+#editor{
+  flex:1;
+  padding:8px 10px;
+  border:1px solid var(--grid);
+  border-radius:8px;
+  font-size:1rem;
+  outline:none;
+}
+
+/* ===== TABLE ===== */
+.sheet-wrapper{
+  margin-top:16px;
+  border:1px solid var(--grid);
+  border-radius:12px;
+  overflow:auto;
+  max-height:560px;
+  scroll-behavior:smooth;
+}
+table{
+  border-collapse:collapse;
+  width:100%;
+}
+th,td{
+  padding:10px;
+  border-bottom:1px solid var(--grid);
+  white-space:nowrap;
+}
+th + th,
+td + td{
+  border-left:1px solid var(--grid-soft);
+}
+tbody tr:nth-child(even){
+  background:var(--row-alt);
+}
+th{
+  background:var(--primary);
+  color:#fff;
+  position:sticky;
+  top:0;
+}
+td.active{
+  box-shadow:0 0 0 2px var(--active) inset;
+  background:#ffe3ed;
+}
+td.duplicate{
+  background:var(--duplicate);
+  font-weight:600;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-top">
+      <strong>Sheets Pro 💕</strong>
+
+      <button class="btn-primary" id="saveXlsx">Save XLSX</button>
+      <button class="btn-primary" id="saveHtml">Save HTML</button>
+
+      <button class="btn-danger" id="clearBtn">Clear</button>
+      <button class="btn-danger" id="resetBtn">Reset</button>
+
+      <button class="btn-danger btn-round" id="undoBtn">⟲</button>
+      <button class="btn-primary btn-round" id="redoBtn">⟳</button>
+    </div>
+
+    <div class="header-bottom">
+      <span id="editorInfo">เลือก cell</span>
+      <input id="editor" disabled>
+    </div>
+  </div>
+
+  <!-- TABLE -->
+  <div class="sheet-wrapper" id="sheetWrap">
+    <div id="table"></div>
+  </div>
+</div>
+
+<script>
+/* ===== CONFIG ===== */
+const ROWS = 500;
+const COLS = 3;
+const STORAGE_KEY = "sheets-pro-final";
+
+/* ===== DATE HELPER ===== */
+function today(){
+  const d=new Date();
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,"0");
+  const day=String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+
+/* ===== DATA ===== */
+let data=[["ถุง","ROLL","EV"]];
+for(let i=1;i<ROWS;i++) data.push(["","",""]);
+
+/* ===== STATE ===== */
+let cur={r:null,c:null};
+let undoStack=[], redoStack=[];
+const snapshot=()=>JSON.parse(JSON.stringify(data));
+
+/* ===== DOM ===== */
+const tableEl=document.getElementById("table");
+const sheetWrap=document.getElementById("sheetWrap");
+const editor=document.getElementById("editor");
+const editorInfo=document.getElementById("editorInfo");
+
+/* ===== STORAGE ===== */
+function saveLocal(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+function loadLocal(){
+  const raw=localStorage.getItem(STORAGE_KEY);
+  if(raw){
+    try{ data=JSON.parse(raw); }catch{}
+  }
+}
+
+/* ===== DUPLICATE ===== */
+function buildDupMap(){
+  const map=new Map();
+  for(let r=1;r<data.length;r++)
+    for(let c=0;c<COLS;c++){
+      const v=data[r][c].trim();
+      if(v) map.set(v,(map.get(v)||0)+1);
+    }
+  return map;
+}
+
+/* ===== RENDER ===== */
+function render(){
+  const dupMap=buildDupMap();
+  let html='<table><thead><tr><th>#</th>';
+  for(let c=0;c<COLS;c++) html+=`<th>${data[0][c]}</th>`;
+  html+='</tr></thead><tbody>';
+
+  for(let r=1;r<data.length;r++){
+    html+=`<tr data-row="${r}"><td>${r}</td>`;
+    for(let c=0;c<COLS;c++){
+      const v=data[r][c];
+      const a=(cur.r===r&&cur.c===c)?'active':'';
+      const d=v && dupMap.get(v)>1?'duplicate':'';
+      html+=`<td class="${a} ${d}" data-r="${r}" data-c="${c}">${v}</td>`;
+    }
+    html+='</tr>';
+  }
+  html+='</tbody></table>';
+  tableEl.innerHTML=html;
+}
+
+/* ===== AUTO SCROLL ===== */
+function centerRow(r){
+  const row=document.querySelector(`tr[data-row="${r}"]`);
+  if(!row) return;
+  const wrapRect=sheetWrap.getBoundingClientRect();
+  const rowRect=row.getBoundingClientRect();
+  const BIAS=-160;
+  sheetWrap.scrollTop+=
+    (rowRect.top-wrapRect.top)
+    -wrapRect.height/2
+    +rowRect.height/2
+    -BIAS;
+}
+
+/* ===== INIT ===== */
+loadLocal();
+render();
+
+/* ===== CLICK CELL ===== */
+tableEl.onclick=e=>{
+  const td=e.target.closest("td[data-r]");
+  if(!td) return;
+  cur={r:+td.dataset.r,c:+td.dataset.c};
+  render();
+  editor.disabled=false;
+  editor.value=data[cur.r][cur.c];
+  editor.focus();
+  editorInfo.textContent=`แถว ${cur.r} | ${data[0][cur.c]}`;
+  requestAnimationFrame(()=>centerRow(cur.r));
+};
+
+/* ===== EDIT ===== */
+editor.onkeydown=e=>{
+  if(e.key==="Enter" && cur.r){
+    undoStack.push(snapshot());
+    redoStack.length=0;
+    data[cur.r][cur.c]=editor.value.trim();
+    saveLocal();
+    cur.r=Math.min(cur.r+1,ROWS-1);
+    render();
+    editor.value=data[cur.r][cur.c];
+    editorInfo.textContent=`แถว ${cur.r} | ${data[0][cur.c]}`;
+    requestAnimationFrame(()=>centerRow(cur.r));
+  }
+};
+
+/* ===== UNDO / REDO ===== */
+undoBtn.onclick=()=>{
+  if(!undoStack.length) return;
+  redoStack.push(snapshot());
+  data=undoStack.pop();
+  saveLocal(); render();
+};
+redoBtn.onclick=()=>{
+  if(!redoStack.length) return;
+  undoStack.push(snapshot());
+  data=redoStack.pop();
+  saveLocal(); render();
+};
+
+/* ===== CLEAR / RESET ===== */
+clearBtn.onclick=()=>{
+  if(!confirm("ลบข้อมูลทั้งหมด?")) return;
+  undoStack.push(snapshot());
+  redoStack.length=0;
+  for(let r=1;r<data.length;r++)
+    for(let c=0;c<COLS;c++) data[r][c]="";
+  saveLocal(); render();
+};
+resetBtn.onclick=()=>{
+  if(!confirm("รีเซ็ตทั้งหมดถาวร?")) return;
+  localStorage.removeItem(STORAGE_KEY);
+  location.reload();
+};
+
+/* ===== SAVE XLSX (AUTO DATE) ===== */
+saveXlsx.onclick=()=>{
+  const date=today();
+  let name=prompt("ตั้งชื่อไฟล์",`sheet-${date}`);
+  if(!name) return;
+  if(!name.endsWith(".xlsx")) name+=".xlsx";
+  const ws=XLSX.utils.aoa_to_sheet(data);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Sheet1");
+  XLSX.writeFile(wb,name);
+};
+
+/* ===== SAVE HTML (AUTO DATE) ===== */
+saveHtml.onclick=()=>{
+  const date=today();
+  let name=prompt("ตั้งชื่อไฟล์",`sheet-${date}`);
+  if(!name) return;
+  if(!name.endsWith(".html")) name+=".html";
+
+  const style=`
+  <style>
+    body{font-family:Kanit,sans-serif;padding:16px}
+    table{border-collapse:collapse;width:100%}
+    th,td{padding:10px;border:1px solid #d0d0d0}
+    th{background:#ff8fb1;color:#fff}
+    tr:nth-child(even){background:#fafafa}
+    td.duplicate{background:#fff0c2;font-weight:600}
+  </style>`;
+  const html=`<!doctype html><html lang="th"><head>
+  <meta charset="utf-8"><title>${name}</title>${style}
+  </head><body>${tableEl.innerHTML}</body></html>`;
+  const blob=new Blob([html],{type:"text/html"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=name;
+  a.click();
+};
+</script>
+
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("service-worker.js");
+  });
+}
+</script>
+
+</body>
+</html>
