@@ -1,0 +1,203 @@
+<!doctype html>
+
+<html lang="th">
+<head>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#ff5fa8">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Sheets Pro v5 — Stable</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{--primary:#1976d2;--success:#28a745;--danger:#dc3545;--muted:#6c757d;--bg:#f5f7f9;--card:#ffffff;--duplicate:#fff2cc;--active-row:#FFF9C4;--active-border:#1E88E5}
+  html,body{height:100%;margin:0;font-family: Inter, "Kanit", sans-serif;background:var(--bg)}
+  .container{max-width:1200px;margin:16px auto;padding:16px;background:var(--card);border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,0.06)}
+  .header{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  h1{font-size:1.1rem;color:var(--primary);margin:0}
+  button{padding:8px 12px;border:0;cursor:pointer;border-radius:6px;font-size:0.9rem}
+  .btn-primary{background:var(--primary);color:white}
+  .btn-success{background:var(--success);color:white}
+  .btn-danger{background:var(--danger);color:white}
+  .sheet-wrapper{border:1px solid #ccc;height:560px;overflow:auto;margin-top:12px;-webkit-overflow-scrolling:touch;position:relative}
+  .table{border-collapse:collapse;width:100%}
+  th,td{border:1px solid #ddd;padding:6px 8px;white-space:nowrap;background:white;font-size:1.02rem}
+  th{background:var(--primary);color:white;position:sticky;top:0;z-index:10}
+  .duplicate{background:var(--duplicate) !important}
+  .table th:first-child,.table td:first-child{position:sticky;left:0;z-index:9;background:#fafafa;font-weight:bold}
+  td.active-cell{box-shadow:0 0 0 2px var(--active-border) inset;z-index:3}
+  tr.active-row td{background:var(--active-row) !important}
+  td.left-indicator{background:#E3F2FD !important;border-left:4px solid var(--active-border) !important}
+  #ghostInput{position:fixed;left:-9999px;top:-9999px;opacity:0}
+  #floatEditor{position:fixed;left:6px;top:6px;right:6px;display:none;border:2px solid var(--active-border);background:white;z-index:1000;padding:8px 12px;border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,0.15);font-size:1rem;box-sizing:border-box}
+  .controls{display:flex;gap:8px;align-items:center;margin-left:auto}
+  .status{font-size:0.85rem;color:var(--muted);margin-left:8px}
+  .pos-indicator{position:fixed;left:12px;top: -9999px;background:rgba(0,0,0,0.75);color:#fff;padding:4px 8px;border-radius:6px;font-size:0.85rem;z-index:1001}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>Sheets Pro v5 — Stable</h1>
+    <div class="controls">
+      <button id="save-xlsx" class="btn-primary">Save XLSX</button>
+      <button id="save-html" class="btn-success">Save HTML</button>
+      <button id="clear-all" class="btn-danger">ลบทั้งหมด</button>
+      <label style="display:flex;align-items:center;gap:6px;margin-left:12px"><input id="duplicate-scan" type="checkbox" checked/> ตรวจคำซ้ำทั้งชีต</label>
+      <span id="status" class="status">Ready</span>
+    </div>
+  </div>
+
+  <div id="sheet-wrapper" class="sheet-wrapper">
+    <div id="table-root"></div>
+  </div>
+
+  <input id="ghostInput" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+  <input id="floatEditor" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+  <div id="floatInfo" class="pos-indicator" aria-hidden="true"></div>
+</div>
+
+<script>
+/* ======= CONFIG ======= */
+const ROW_HEIGHT = 34, BUFFER = 40;
+const START_ROWS = 400;
+
+/* ======= STATE ======= */
+let sheetData = [];
+let isDirty = false;
+let history = [], historyPos = -1;
+let lastS = -1, lastE = -1;
+let currentCell = {r:1,c:0};
+
+/* ======= DUPLICATE MAP ======= */
+let globalMap = new Map();
+function buildGlobalMap(){
+  globalMap.clear();
+  for(let r=1;r<sheetData.length;r++){
+    for(let c=0;c<sheetData[r].length;c++){
+      const v = (sheetData[r][c]||'').trim();
+      if(!v) continue;
+      globalMap.set(v, (globalMap.get(v)||0) + 1);
+    }
+  }
+}
+function updateGlobalMapOnChange(r,c,oldVal,newVal){
+  if(oldVal){ const cnt = globalMap.get(oldVal)||0; if(cnt<=1) globalMap.delete(oldVal); else globalMap.set(oldVal,cnt-1); }
+  if(newVal){ globalMap.set(newVal,(globalMap.get(newVal)||0)+1); }
+}
+function isDuplicateValue(val){ if(!val) return false; return (globalMap.get(val)||0) > 1; }
+
+/* ======= LOAD / INIT ======= */
+const savedKey = 'sheetData_v5';
+(function load(){
+  const saved = localStorage.getItem(savedKey);
+  if(saved){ try{ sheetData = JSON.parse(saved).data; }catch{ sheetData = null; }}
+  if(!sheetData || sheetData.length===0){
+    sheetData = [["ถุง","ROLL","EV"]];
+    sheetData.push(["A001","R1","E1"]);
+    sheetData.push(["A001","R2","E2"]);
+    for(let i=sheetData.length;i<START_ROWS;i++) sheetData.push(new Array(sheetData[0].length).fill(''));
+  }
+  buildGlobalMap();
+})();
+
+/* ======= RENDER ======= */
+function computeRange(){ const wrap = document.getElementById('sheet-wrapper'); const top = wrap.scrollTop; const h = wrap.clientHeight; let s = Math.floor(top/ROW_HEIGHT)-BUFFER; let e = Math.floor((top+h)/ROW_HEIGHT)+BUFFER; s = Math.max(1,s); e = Math.min(sheetData.length-1,e); return {s,e}; }
+function escapeHTML(s){ return s?String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : ''; }
+function render(force=false){ const root = document.getElementById('table-root'); const {s,e} = computeRange(); if(!force && s===lastS && e===lastE) return; lastS=s; lastE=e; const cols = sheetData[0].length; let html = `<table class="table"><thead><tr>`; html += `<th>#</th>`; for(let c=0;c<cols;c++){ html += `<th>${escapeHTML(sheetData[0][c]||('Col'+(c+1)))}</th>`;} html += `</tr></thead><tbody>`; html += `<tr><td colspan="${cols+1}" style="height:${(s-1)*ROW_HEIGHT}px;border:0"></td></tr>`;
+  for(let r=s;r<=e;r++){
+    html += `<tr data-r="${r}">`;
+    html += `<td data-c="-1">${r}</td>`;
+    for(let c=0;c<cols;c++){
+      const v = sheetData[r][c] || '';
+      const dup = (document.getElementById('duplicate-scan').checked && isDuplicateValue(v)) ? 'duplicate' : '';
+      html += `<td class="${dup}" data-r="${r}" data-c="${c}">${escapeHTML(v)}</td>`;
+    }
+    html += `</tr>`;
+  }
+  html += `<tr><td colspan="${cols+1}" style="height:${(sheetData.length-1-e)*ROW_HEIGHT}px;border:0"></td></tr>`;
+  html += `</tbody></table>`;
+  root.innerHTML = html; applyActive();
+}
+
+/* ======= ACTIVE CELL UI ======= */
+let activeTd = null;
+function applyActive(){ document.querySelectorAll('.active-cell').forEach(td=>td.classList.remove('active-cell')); document.querySelectorAll('tr.active-row').forEach(tr=>tr.classList.remove('active-row')); document.querySelectorAll('.left-indicator').forEach(td=>td.classList.remove('left-indicator'));
+ const td = document.querySelector(`td[data-r="${currentCell.r}"][data-c="${currentCell.c}"]`);
+ const row = document.querySelector(`tr[data-r="${currentCell.r}"]`);
+ if(row){ row.classList.add('active-row'); const left = row.querySelector('td[data-c="-1"]'); if(left) left.classList.add('left-indicator'); }
+ if(td){ td.classList.add('active-cell'); activeTd = td; }
+}
+
+/* ======= AUTO CENTER (slightly higher) ======= */
+function autoCenterRow(r){
+  const wrap = document.getElementById('sheet-wrapper');
+  const offset = 120; // distance from top as requested
+  const targetTop = (r * ROW_HEIGHT) - offset;
+  wrap.scrollTo({ top: targetTop, behavior: 'smooth' });
+}
+
+/* ======= GHOST INPUT ======= */
+const ghost = document.getElementById('ghostInput'); const SCAN_MS = 50; let scanTimer = null;
+ghost.addEventListener('input', ()=>{ if(scanTimer) clearTimeout(scanTimer); if(ghost.value.length>0){ scanTimer = setTimeout(()=>{ commitAndNext(ghost.value); ghost.value=''; scanTimer=null; }, SCAN_MS); } });
+ghost.addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); if(scanTimer){ clearTimeout(scanTimer); scanTimer=null; } commitAndNext(ghost.value); ghost.value=''; } else if(ev.key==='Tab'){ ev.preventDefault(); /* do nothing */ } });
+
+/* ======= FLOAT EDITOR (fixed at top like Excel Mobile) ======= */
+const floatEd = document.getElementById('floatEditor');
+const floatInfo = document.getElementById('floatInfo');
+function showFloat(r,c){
+  const td = document.querySelector(`td[data-r="${r}"][data-c="${c}"]`);
+  if(!td){ currentCell={r,c}; render(true); return; }
+  currentCell={r,c}; applyActive();
+  // populate editor
+  floatEd.value = sheetData[r][c]||'';
+  // fixed top placement: editor anchored at top (Excel Mobile style)
+  floatEd.style.display = 'block';
+  // put indicator above editor
+  floatInfo.textContent = `R${r}  C${c+1}  (${sheetData[0][c]||''})`;
+  floatInfo.style.top = '6px';
+  floatInfo.style.left = '12px';
+  floatInfo.style.display = 'block';
+  // ensure focus after layout
+  setTimeout(()=>{ try{ floatEd.focus(); floatEd.select(); }catch(e){} },50);
+}
+function hideFloat(){ floatEd.style.display='none'; floatInfo.style.display='none'; ghost.focus(); }
+
+floatEd.addEventListener('keydown', ev=>{
+  if(ev.key==='Enter'){ ev.preventDefault(); const val = floatEd.value; hideFloat(); commitAndNext(val); }
+  else if(ev.key==='Escape'){ hideFloat(); }
+});
+floatEd.addEventListener('blur', ()=>{ if(floatEd.style.display==='block'){ const val=floatEd.value; hideFloat(); commitAndNext(val); } });
+
+/* ======= COMMIT & HISTORY ======= */
+function pushHistory(snapshot){ history = history.slice(0, historyPos+1); history.push(JSON.stringify(snapshot)); historyPos = history.length-1; }
+function commitCell(r,c,val,recordHistory=true){ const oldVal = sheetData[r][c]; if(oldVal===val) return false; if(recordHistory) pushHistory(sheetData); updateGlobalMapOnChange(r,c,oldVal,(val||'').trim()); sheetData[r][c] = val; isDirty = true; return true; }
+function commitAndNext(val){ const r = currentCell.r, c = currentCell.c; const trimmed = (val||'').trim(); const changed = commitCell(r,c,trimmed,true); if(changed){ document.getElementById('status').textContent = 'Saved'; }
+  if(r+1 >= sheetData.length){ const cols = sheetData[0].length; sheetData.push(new Array(cols).fill('')); }
+  currentCell.r = r+1; render(true); applyActive(); autoCenterRow(currentCell.r); ghost.focus(); }
+
+/* ======= EVENTS ======= */
+document.getElementById('table-root').addEventListener('click', ev=>{ const td = ev.target.closest('td[data-r][data-c]'); if(!td) return; showFloat(Number(td.dataset.r), Number(td.dataset.c)); });
+document.getElementById('save-xlsx').addEventListener('click', ()=>{ const ws = XLSX.utils.aoa_to_sheet(sheetData); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Sheet1'); XLSX.writeFile(wb,'sheet.xlsx'); });
+document.getElementById('save-html').addEventListener('click', ()=>{ let html = '<table border=1><tr><th>#</th>'; sheetData[0].forEach(h=>html+=`<th>${h}</th>`); html+='</tr>'; for(let r=1;r<sheetData.length;r++){ html+='<tr>'; html+=`<td>${r}</td>`; sheetData[r].forEach(v=>html+=`<td>${v}</td>`); html+='</tr>'; } html+='</table>'; const blob = new Blob([html],{type:'text/html'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'sheet.html'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),500); });
+
+document.getElementById('clear-all').addEventListener('click', ()=>{ if(!confirm('ล้างข้อมูลทั้งหมด?')) return; for(let r=1;r<sheetData.length;r++){ for(let c=0;c<sheetData[r].length;c++){ sheetData[r][c]=''; } } buildGlobalMap(); isDirty=true; render(true); });
+
+document.getElementById('duplicate-scan').addEventListener('change', ()=>{ render(true); });
+document.getElementById('sheet-wrapper').addEventListener('scroll', ()=>{ render(); });
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden){ if(floatEd.style.display==='block'){ floatEd.focus(); floatEd.select(); } else { ghost.focus(); } } });
+
+/* ======= AUTOSAVE ======= */
+setInterval(()=>{ if(!isDirty) return; localStorage.setItem(savedKey, JSON.stringify({data:sheetData})); isDirty=false; document.getElementById('status').textContent='Auto-saved'; setTimeout(()=>document.getElementById('status').textContent='Ready',800); }, 1800);
+
+/* ======= INIT ======= */
+render(true); currentCell = {r:1,c:0}; applyActive(); autoCenterRow(1); ghost.focus();
+
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('service-worker.js');
+}
+</script>
+</body>
+</html>
