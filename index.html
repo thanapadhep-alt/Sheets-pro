@@ -346,14 +346,33 @@ saveHtml.onclick=()=>{
   a.click();
 };
   
-  function exportScanColumnA(){
-  const colA = [];
+function exportScanColumnA(){
+  const result = [];
+
   for(let r = 1; r < data.length; r++){
-    const v = data[r][0].trim(); // ⭐ index 0 = คอลัมน์ A
-    if(v) colA.push(v);
+    const bagCode  = String(data[r][0] || "").trim(); // A = ถุง
+    const rollCode = String(data[r][1] || "").trim(); // D = ROLL
+
+    // ถุง
+    if(bagCode){
+      result.push({
+        code: bagCode,
+        type: "bag"
+      });
+    }
+
+    // ROLL
+    if(rollCode){
+      result.push({
+        code: rollCode,
+        type: "roll"
+      });
+    }
   }
-  localStorage.setItem("scan-A", JSON.stringify(colA));
+
+  localStorage.setItem("scan-A", JSON.stringify(result));
 }
+
   openP58.onclick = () => {
   exportScanColumnA();
   location.href = "ป.58พื้นที่.html";
