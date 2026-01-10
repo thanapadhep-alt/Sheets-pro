@@ -1,15 +1,13 @@
-const CACHE_NAME = "sheets-pro";
+const CACHE_NAME = "sheets-pro-v3";
 
 const ASSETS = [
   "./",
   "./index.html",
-  "./ป.58พื้นที่.html",      // ✅ หน้า ป.58 (แก้ให้ตรงชื่อจริง)
   "./manifest.json",
   "./service-worker.js",
-
-  // ถ้ามีไฟล์อื่น เช่น css/js/icon ให้เพิ่ม
-  "./icons/icon-192.png",
-  "./icons/icon-512.png"
+  "./ป.58พื้นที่.html",
+  "./icon-192.png",
+  "./icon-512.png",
 ];
 
 // ติดตั้ง + cache ไฟล์ทั้งหมด
@@ -20,7 +18,7 @@ self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 
-// ใช้งาน cache ทันที
+// ใช้งาน cache ทันที + เคลียร์ cache เก่า
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -30,15 +28,29 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// Offline-first
+// Offline: cache-first + รองรับ navigation
 self.addEventListener("fetch", (event) => {
+  const req = event.request;
+
+  // เปิดหน้าเว็บ (HTML Navigation)
+  if (req.mode === "navigate") {
+    event.respondWith(
+      fetch(req).catch(() => caches.match("./index.html"))
+    );
+    return;
+  }
+
+  // ไฟล์อื่นๆ
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    caches.match(req).then((cached) => {
       return (
         cached ||
-        fetch(event.request).then((res) => {
+        fetch(req).then((res) => {
           const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
           return res;
-        }).catch(() => caches.match("./index.html"))
-      );sheets-pro-a4--v1
+        })
+      );
+    }).catch(() => caches.match("./index.html"))
+  );
+});
