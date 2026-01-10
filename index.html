@@ -396,6 +396,14 @@ if ("serviceWorker" in navigator) {
   });
 }
 </script>
+  <script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", async () => {
+    const reg = await navigator.serviceWorker.register("./service-worker.js");
+    reg.update(); // ✅ บังคับเช็คอัปเดต
+  });
+}
+  </script>
 
 </body>
 </html>
